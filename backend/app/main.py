@@ -1,21 +1,28 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config.settings import settings
 
 app = FastAPI(
-    title="BAMS API",
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
     description="Biomedical Asset Management System Backend",
-    version="1.0.0",
+
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.FRONTEND_URL],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 def root():
-    return {
-        "message": "Welcome to the BAMS API"
-    }
+    return {"message": "Welcome to the BAMS API"}
 
 
 @app.get("/health")
 def health():
-    return {
-        "status": "ok"
-    }
+    return {"status": "ok"}
