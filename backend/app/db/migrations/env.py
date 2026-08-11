@@ -7,14 +7,46 @@ from alembic import context
 
 from app.config.settings import settings
 
-
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 
-target_metadata = None
+from app.db.base import Base
+
+target_metadata = Base.metadata
+
+from app.models import (
+    Building,
+    Department,
+    DepartmentDoctor,
+    DepartmentLocation,
+    EquipmentCategory,
+    EquipmentType,
+    Floor,
+    Location,
+    Machine,
+    Manufacturer,
+    Owner,
+    AssetOwnership,
+    MaintenanceRequest,
+    MaintenanceRecord,
+    MaintenanceSchedule,
+    Role,
+    User,
+    RPDRequest,
+    RPDDocument,
+    DocumentTemplate,
+    TemplateField,    
+    Document,
+    MaintenanceDocument,
+    DocumentApproval,
+    Supplier,
+    AssetAcquisition,
+    AssetTransfer,
+    AuditLog,
+)
 
 config.set_main_option(
     "sqlalchemy.url",
