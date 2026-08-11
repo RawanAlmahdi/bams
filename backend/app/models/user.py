@@ -1,9 +1,10 @@
 from datetime import datetime
 
 from sqlalchemy import ForeignKey, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.role import Role
 
 
 class User(Base):
@@ -36,6 +37,8 @@ class User(Base):
         ForeignKey("roles.id"),
         nullable=False,
     )
+
+    role: Mapped["Role"] = relationship("Role")
 
     account_status: Mapped[str] = mapped_column(
         String(20),
