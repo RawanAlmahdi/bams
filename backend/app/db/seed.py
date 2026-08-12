@@ -10,6 +10,7 @@ from app.models.user import User
 
 
 ROLES = [
+    "Pending User",
     "System Administrator",
     "Biomedical Engineer",
     "Security Guard",
