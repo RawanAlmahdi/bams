@@ -13,6 +13,7 @@ ROLES = [
     "Pending User",
     "System Administrator",
     "Biomedical Engineer",
+    "Senior Biomedical Engineer",
     "Security Guard",
     "Doctor",
     "RPD Doctor",

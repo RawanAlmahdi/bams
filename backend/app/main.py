@@ -13,7 +13,7 @@ from app.api.v1.routes.machines import router as machines_router
 from app.api.v1.routes.equipment_categories import router as equipment_categories_router
 from app.api.v1.routes.equipment_types import router as equipment_types_router
 from app.api.v1.routes.manufacturers import router as manufacturers_router
-
+from app.api.v1.routes.maintenance_requests import router as maintenance_requests_router
 
 
 from app.config.settings import settings
@@ -47,6 +47,10 @@ app.include_router(machines_router)
 app.include_router(equipment_categories_router)
 app.include_router(equipment_types_router)
 app.include_router(manufacturers_router)
+app.include_router(maintenance_requests_router)
+
+
+
 
 @app.get("/")
 def root():

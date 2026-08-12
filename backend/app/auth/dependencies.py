@@ -1,3 +1,4 @@
+#How do protected endpoints know who is calling?
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import select
