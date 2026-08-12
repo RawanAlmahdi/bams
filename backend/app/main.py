@@ -7,6 +7,7 @@ from app.api.v1.routes.buildings import router as buildings_router
 from app.api.v1.routes.floors import router as floors_router
 from app.api.v1.routes.locations import router as locations_router
 from app.api.v1.routes.department_locations import router as department_locations_router
+from app.api.v1.routes.departments import router as departments_router
 
 from app.config.settings import settings
 
@@ -33,6 +34,7 @@ app.include_router(buildings_router)
 app.include_router(floors_router)
 app.include_router(locations_router)
 app.include_router(department_locations_router)
+app.include_router(departments_router)
 
 @app.get("/")
 def root():
