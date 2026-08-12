@@ -11,6 +11,7 @@ from app.api.v1.routes.departments import router as departments_router
 from app.api.v1.routes.department_doctors import router as department_doctors_router
 from app.api.v1.routes.machines import router as machines_router
 from app.api.v1.routes.equipment_categories import router as equipment_categories_router
+from app.api.v1.routes.equipment_types import router as equipment_types_router
 
 from app.config.settings import settings
 
@@ -41,6 +42,7 @@ app.include_router(departments_router)
 app.include_router(department_doctors_router)
 app.include_router(machines_router)
 app.include_router(equipment_categories_router)
+app.include_router(equipment_types_router)
 
 @app.get("/")
 def root():
