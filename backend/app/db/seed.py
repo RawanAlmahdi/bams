@@ -15,6 +15,7 @@ ROLES = [
     "Biomedical Engineer",
     "Security Guard",
     "Doctor",
+    "RPD Doctor",
     "Nurse",
     "Technician",
 ]
