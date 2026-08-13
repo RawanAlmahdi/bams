@@ -10,6 +10,7 @@ from app.main import app
 from app.models.audit_log import AuditLog
 from app.models.machine import Machine
 from app.models.maintenance_request import MaintenanceRequest
+from app.models.notification import Notification
 from app.models.role import Role
 from app.models.user import User
 
@@ -66,6 +67,15 @@ async def cleanup(
     machine_ids: list[int],
 ):
     async with AsyncSessionLocal() as db:
+
+        # Notifications reference users, so delete them first.
+        if user_ids:
+            await db.execute(
+                delete(Notification).where(
+                    Notification.user_id.in_(user_ids)
+                )
+            )
+
         for user_id in user_ids:
             await db.execute(
                 delete(AuditLog).where(
@@ -88,13 +98,19 @@ async def cleanup(
                 )
             )
 
-        await db.execute(
-            delete(User).where(
-                User.id.in_(user_ids)
+        if user_ids:
+            await db.execute(
+                delete(User).where(
+                    User.id.in_(user_ids)
+                )
             )
-        )
 
         await db.commit()
+
+
+# ============================================================
+# Basic Maintenance Request Tests
+# ============================================================
 
 
 @pytest.mark.asyncio
@@ -623,5 +639,537 @@ async def test_non_requester_cannot_create_maintenance_request():
     finally:
         await cleanup(
             [engineer.id],
+            [machine.id],
+        )
+
+
+# ============================================================
+# Notification Tests
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_new_maintenance_request_notifies_engineers():
+    technician = await create_user(
+        "Technician",
+        "test_notification_new_request_technician",
+    )
+
+    engineer = await create_user(
+        "Biomedical Engineer",
+        "test_notification_new_request_engineer",
+    )
+
+    senior = await create_user(
+        "Senior Biomedical Engineer",
+        "test_notification_new_request_senior",
+    )
+
+    machine = await create_machine()
+
+    token = create_access_token(technician.id)
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+
+            response = await client.post(
+                "/maintenance-requests",
+                headers={
+                    "Authorization": f"Bearer {token}"
+                },
+                json={
+                    "machine_id": machine.id,
+                    "request_type": "CORRECTIVE",
+                    "priority": "HIGH",
+                    "problem_description": "Machine issue.",
+                },
+            )
+
+        assert response.status_code == 201
+
+        request_id = response.json()["id"]
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Notification).where(
+                    Notification.entity_id == request_id,
+                    Notification.notification_type
+                    == "MAINTENANCE_NEW_REQUEST",
+                )
+            )
+
+            notifications = result.scalars().all()
+
+        recipient_ids = {
+            notification.user_id
+            for notification in notifications
+        }
+
+        assert engineer.id in recipient_ids
+        assert senior.id in recipient_ids
+
+        for notification in notifications:
+            assert notification.entity_id == request_id
+            assert notification.action_required is True
+            assert notification.is_read is False
+
+    finally:
+        await cleanup(
+            [
+                technician.id,
+                engineer.id,
+                senior.id,
+            ],
+            [machine.id],
+        )
+
+
+@pytest.mark.asyncio
+async def test_engineer_release_notifies_other_engineers():
+    engineer_a = await create_user(
+        "Biomedical Engineer",
+        "test_notification_release_a",
+    )
+
+    engineer_b = await create_user(
+        "Biomedical Engineer",
+        "test_notification_release_b",
+    )
+
+    senior = await create_user(
+        "Senior Biomedical Engineer",
+        "test_notification_release_senior",
+    )
+
+    technician = await create_user(
+        "Technician",
+        "test_notification_release_requester",
+    )
+
+    machine = await create_machine()
+
+    requester_token = create_access_token(technician.id)
+    engineer_token = create_access_token(engineer_a.id)
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+
+            create_response = await client.post(
+                "/maintenance-requests",
+                headers={
+                    "Authorization": f"Bearer {requester_token}"
+                },
+                json={
+                    "machine_id": machine.id,
+                    "request_type": "CORRECTIVE",
+                    "problem_description": "Machine issue.",
+                },
+            )
+
+            request_id = create_response.json()["id"]
+
+            await client.patch(
+                f"/maintenance-requests/{request_id}/take",
+                headers={
+                    "Authorization": f"Bearer {engineer_token}"
+                },
+            )
+
+            # Capture notification IDs that existed before release.
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(Notification).where(
+                        Notification.entity_id == request_id
+                    )
+                )
+
+                notifications_before_release = result.scalars().all()
+
+            existing_notification_ids = {
+                notification.id
+                for notification in notifications_before_release
+            }
+
+            response = await client.patch(
+                f"/maintenance-requests/{request_id}/release",
+                headers={
+                    "Authorization": f"Bearer {engineer_token}"
+                },
+            )
+
+        assert response.status_code == 200
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Notification).where(
+                    Notification.entity_id == request_id
+                )
+            )
+
+            notifications_after_release = result.scalars().all()
+
+        # Only inspect notifications created by the release event.
+        new_notifications = [
+            notification
+            for notification in notifications_after_release
+            if notification.id not in existing_notification_ids
+        ]
+
+        recipient_ids = {
+            notification.user_id
+            for notification in new_notifications
+            if notification.notification_type
+            == "MAINTENANCE_NEW_REQUEST"
+        }
+
+        assert engineer_b.id in recipient_ids
+        assert senior.id in recipient_ids
+
+        # The engineer who released the request does not
+        # receive the new-task broadcast.
+        assert engineer_a.id not in recipient_ids
+
+    finally:
+        await cleanup(
+            [
+                engineer_a.id,
+                engineer_b.id,
+                senior.id,
+                technician.id,
+            ],
+            [machine.id],
+        )
+
+
+@pytest.mark.asyncio
+async def test_senior_engineer_can_release_other_engineers_task():
+    senior = await create_user(
+        "Senior Biomedical Engineer",
+        "test_notification_senior_release",
+    )
+
+    engineer_a = await create_user(
+        "Biomedical Engineer",
+        "test_notification_senior_release_a",
+    )
+
+    engineer_b = await create_user(
+        "Biomedical Engineer",
+        "test_notification_senior_release_b",
+    )
+
+    technician = await create_user(
+        "Technician",
+        "test_notification_senior_release_requester",
+    )
+
+    machine = await create_machine()
+
+    requester_token = create_access_token(technician.id)
+    engineer_token = create_access_token(engineer_a.id)
+    senior_token = create_access_token(senior.id)
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+
+            create_response = await client.post(
+                "/maintenance-requests",
+                headers={
+                    "Authorization": f"Bearer {requester_token}"
+                },
+                json={
+                    "machine_id": machine.id,
+                    "request_type": "CORRECTIVE",
+                    "problem_description": "Machine issue.",
+                },
+            )
+
+            request_id = create_response.json()["id"]
+
+            await client.patch(
+                f"/maintenance-requests/{request_id}/take",
+                headers={
+                    "Authorization": f"Bearer {engineer_token}"
+                },
+            )
+
+            # Capture notifications before the senior releases it.
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(Notification).where(
+                        Notification.entity_id == request_id
+                    )
+                )
+
+                notifications_before_release = result.scalars().all()
+
+            existing_notification_ids = {
+                notification.id
+                for notification in notifications_before_release
+            }
+
+            response = await client.patch(
+                f"/maintenance-requests/{request_id}/release",
+                headers={
+                    "Authorization": f"Bearer {senior_token}"
+                },
+            )
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert data["assigned_to"] is None
+        assert data["status"] == "PENDING"
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Notification).where(
+                    Notification.entity_id == request_id
+                )
+            )
+
+            notifications_after_release = result.scalars().all()
+
+        new_notifications = [
+            notification
+            for notification in notifications_after_release
+            if notification.id not in existing_notification_ids
+        ]
+
+        released_notification = next(
+            notification
+            for notification in new_notifications
+            if notification.user_id == engineer_a.id
+            and notification.notification_type
+            == "MAINTENANCE_RELEASED"
+        )
+
+        assert released_notification.action_required is False
+
+        broadcast_recipient_ids = {
+            notification.user_id
+            for notification in new_notifications
+            if notification.notification_type
+            == "MAINTENANCE_NEW_REQUEST"
+        }
+
+        assert engineer_b.id in broadcast_recipient_ids
+        assert engineer_a.id not in broadcast_recipient_ids
+        assert senior.id not in broadcast_recipient_ids
+
+    finally:
+        await cleanup(
+            [
+                senior.id,
+                engineer_a.id,
+                engineer_b.id,
+                technician.id,
+            ],
+            [machine.id],
+        )
+
+
+@pytest.mark.asyncio
+async def test_reassignment_notifies_old_and_new_engineers():
+    senior = await create_user(
+        "Senior Biomedical Engineer",
+        "test_notification_reassign_senior",
+    )
+
+    engineer_a = await create_user(
+        "Biomedical Engineer",
+        "test_notification_reassign_a",
+    )
+
+    engineer_b = await create_user(
+        "Biomedical Engineer",
+        "test_notification_reassign_b",
+    )
+
+    technician = await create_user(
+        "Technician",
+        "test_notification_reassign_requester",
+    )
+
+    machine = await create_machine()
+
+    requester_token = create_access_token(technician.id)
+    engineer_token = create_access_token(engineer_a.id)
+    senior_token = create_access_token(senior.id)
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+
+            create_response = await client.post(
+                "/maintenance-requests",
+                headers={
+                    "Authorization": f"Bearer {requester_token}"
+                },
+                json={
+                    "machine_id": machine.id,
+                    "request_type": "CORRECTIVE",
+                    "problem_description": "Machine issue.",
+                },
+            )
+
+            request_id = create_response.json()["id"]
+
+            await client.patch(
+                f"/maintenance-requests/{request_id}/take",
+                headers={
+                    "Authorization": f"Bearer {engineer_token}"
+                },
+            )
+
+            response = await client.patch(
+                f"/maintenance-requests/{request_id}/reassign/{engineer_b.id}",
+                headers={
+                    "Authorization": f"Bearer {senior_token}"
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["assigned_to"] == engineer_b.id
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Notification).where(
+                    Notification.entity_id == request_id,
+                    Notification.notification_type
+                    == "MAINTENANCE_REASSIGNED",
+                )
+            )
+
+            notifications = result.scalars().all()
+
+        recipient_ids = {
+            notification.user_id
+            for notification in notifications
+        }
+
+        assert engineer_a.id in recipient_ids
+        assert engineer_b.id in recipient_ids
+
+        new_engineer_notification = next(
+            notification
+            for notification in notifications
+            if notification.user_id == engineer_b.id
+        )
+
+        old_engineer_notification = next(
+            notification
+            for notification in notifications
+            if notification.user_id == engineer_a.id
+        )
+
+        assert new_engineer_notification.action_required is True
+        assert old_engineer_notification.action_required is False
+
+    finally:
+        await cleanup(
+            [
+                senior.id,
+                engineer_a.id,
+                engineer_b.id,
+                technician.id,
+            ],
+            [machine.id],
+        )
+
+
+@pytest.mark.asyncio
+async def test_completed_request_notifies_requester():
+    engineer = await create_user(
+        "Biomedical Engineer",
+        "test_notification_complete_engineer",
+    )
+
+    technician = await create_user(
+        "Technician",
+        "test_notification_complete_requester",
+    )
+
+    machine = await create_machine()
+
+    requester_token = create_access_token(technician.id)
+    engineer_token = create_access_token(engineer.id)
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+
+            create_response = await client.post(
+                "/maintenance-requests",
+                headers={
+                    "Authorization": f"Bearer {requester_token}"
+                },
+                json={
+                    "machine_id": machine.id,
+                    "request_type": "CORRECTIVE",
+                    "problem_description": "Machine issue.",
+                },
+            )
+
+            request_id = create_response.json()["id"]
+
+            await client.patch(
+                f"/maintenance-requests/{request_id}/take",
+                headers={
+                    "Authorization": f"Bearer {engineer_token}"
+                },
+            )
+
+            await client.patch(
+                f"/maintenance-requests/{request_id}/start",
+                headers={
+                    "Authorization": f"Bearer {engineer_token}"
+                },
+            )
+
+            response = await client.patch(
+                f"/maintenance-requests/{request_id}/complete",
+                headers={
+                    "Authorization": f"Bearer {engineer_token}"
+                },
+            )
+
+        assert response.status_code == 200
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Notification).where(
+                    Notification.user_id == technician.id,
+                    Notification.entity_id == request_id,
+                    Notification.notification_type
+                    == "MAINTENANCE_COMPLETED",
+                )
+            )
+
+            notification = result.scalar_one()
+
+        assert notification.action_required is False
+        assert notification.is_read is False
+
+    finally:
+        await cleanup(
+            [
+                engineer.id,
+                technician.id,
+            ],
             [machine.id],
         )

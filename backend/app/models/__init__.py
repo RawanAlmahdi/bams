@@ -26,6 +26,7 @@ from app.models.supplier import Supplier
 from app.models.asset_acquisition import AssetAcquisition
 from app.models.asset_transfer import AssetTransfer
 from app.models.audit_log import AuditLog
+from app.models.notification import Notification
 
 __all__ = [
     "Building",
@@ -56,4 +57,5 @@ __all__ = [
     "AssetAcquisition",
     "AssetTransfer",
     "AuditLog",
+    "Notification"
 ]

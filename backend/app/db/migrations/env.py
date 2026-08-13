@@ -46,6 +46,7 @@ from app.models import (
     AssetAcquisition,
     AssetTransfer,
     AuditLog,
+    Notification,
 )
 
 config.set_main_option(
